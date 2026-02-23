@@ -67,14 +67,50 @@ fn pick_icon(conds: &[String]) -> &'static str {
     icon("dry")
 }
 
+fn geocode(city: &str) -> Option<(f64, f64, String)> {
+    let url = format!(
+        "https://nominatim.openstreetmap.org/search?q={}&format=json&limit=1",
+        city.replace(' ', "+")
+    );
+    let mut resp = ureq::get(&url)
+        .header("User-Agent", "weather-cli")
+        .call()
+        .ok()?;
+    let body = resp.body_mut().read_to_string().ok()?;
+    let results: Vec<serde_json::Value> = serde_json::from_str(&body).ok()?;
+    let first = results.first()?;
+    let lat: f64 = first["lat"].as_str()?.parse().ok()?;
+    let lon: f64 = first["lon"].as_str()?.parse().ok()?;
+    let name = first["display_name"].as_str()?.split(',').next()?.trim().to_string();
+    Some((lat, lon, name))
+}
+
 fn main() {
+    let city = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
+    let city = if city.is_empty() {
+        eprint!("City: ");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap();
+        input.trim().to_string()
+    } else {
+        city
+    };
+
+    let (lat, lon, name) = match geocode(&city) {
+        Some(v) => v,
+        None => {
+            eprintln!("Could not find city: {city}");
+            return;
+        }
+    };
+
     let now = Local::now();
     let today = now.format("%Y-%m-%d").to_string();
     let date_from = now.format("%Y-%m-%dT%H:00").to_string();
     let date_to = (now + chrono::Duration::days(3)).format("%Y-%m-%dT%H:00").to_string();
 
     let url = format!(
-        "https://api.brightsky.dev/weather?lat=52.15&lon=9.95&date={}&last_date={}",
+        "https://api.brightsky.dev/weather?lat={lat}&lon={lon}&date={}&last_date={}",
         date_from, date_to
     );
 
@@ -129,7 +165,8 @@ fn main() {
     }
 
     // Cards
-    println!("\n  {BOLD}{CYAN}Overview{RESET}");
+    println!("\n  {BOLD}{CYAN}{name}{RESET}");
+    println!("  {DIM}                 Temp             Rain{RESET}");
     println!("  {DIM}──────────────────────────────────────{RESET}");
     for (day, d) in &days {
         let ic = pick_icon(&d.conds);
@@ -148,8 +185,8 @@ fn main() {
     // Hourly today
     if let Some((_, d)) = days.iter().find(|(day, _)| day == &today) {
         if !d.hours.is_empty() {
-            println!("\n  {BOLD}{CYAN}Today — Hourly{RESET}");
-            println!("  {DIM}Time       Temp   Rain{RESET}");
+            println!();
+            println!("  {DIM}Time         Temp   Rain{RESET}");
             println!("  {DIM}──────────────────────────────────────{RESET}");
             for (hour, t, rp, cond) in &d.hours {
                 let ic = icon(cond);
